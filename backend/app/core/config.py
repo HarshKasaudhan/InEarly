@@ -12,25 +12,49 @@ class Settings(BaseSettings):
 
     # Allowed CORS Origins for Frontend
     CORS_ORIGINS: Union[List[str], str] = Field(
-        default=["http://localhost:3000", "http://127.0.0.1:3000"],
+        default=[
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://localhost:3001",
+            "http://127.0.0.1:3001",
+            "https://inearly.onrender.com",
+            "https://inearly-frontend.onrender.com",
+        ],
         description="Allowed CORS origins (comma-separated or JSON array in .env)",
+    )
+    CORS_ORIGIN_REGEX: str = Field(
+        default=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$|^https://.*\.onrender\.com$|^https://.*\.vercel\.app$",
+        description="Regex pattern for dynamic preview & production deployment origins (Render, Vercel)",
     )
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
+        default_origins = [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://localhost:3001",
+            "http://127.0.0.1:3001",
+            "https://inearly.onrender.com",
+            "https://inearly-frontend.onrender.com",
+        ]
         if isinstance(v, str):
             clean = v.strip()
             if clean.startswith("[") and clean.endswith("]"):
                 import json
                 try:
-                    return json.loads(clean)
+                    parsed = json.loads(clean)
+                    if isinstance(parsed, list):
+                        # Merge defaults with parsed items preserving order
+                        combined = list(dict.fromkeys([str(i).strip() for i in parsed if str(i).strip()] + default_origins))
+                        return combined
                 except Exception:
                     pass
-            return [i.strip() for i in clean.split(",") if i.strip()]
+            parsed_list = [i.strip() for i in clean.split(",") if i.strip()]
+            return list(dict.fromkeys(parsed_list + default_origins))
         elif isinstance(v, list):
-            return [str(i).strip() for i in v if str(i).strip()]
-        return ["http://localhost:3000", "http://127.0.0.1:3000"]
+            return list(dict.fromkeys([str(i).strip() for i in v if str(i).strip()] + default_origins))
+        return default_origins
 
     # Supabase Configuration
     SUPABASE_URL: str = Field(default="", description="Supabase project URL")

@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from app.core.config import settings
-from app.api.v1.endpoints import health, consents, chat, plans, memory, account, psychiatrists, tts
+from app.api.v1.endpoints import health, consents, chat, plans, memory, account, psychiatrists, tts, face
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -29,9 +29,11 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
+    allow_origin_regex=settings.CORS_ORIGIN_REGEX,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Root-level health check for load-balancers & container orchestrators
@@ -69,6 +71,11 @@ app.include_router(psychiatrists.router, prefix=f"{settings.API_V1_STR}/psychiat
 # ElevenLabs Natural Voice Text-to-Speech
 app.include_router(tts.router, prefix="/v1/tts", tags=["TTS"])
 app.include_router(tts.router, prefix=f"{settings.API_V1_STR}/tts", tags=["TTS"])
+
+# Dual-Model Face Perception & MiniFASNet v2 Anti-Spoofing
+app.include_router(face.router, prefix="/v1/face", tags=["Face Perception"])
+app.include_router(face.router, prefix=f"{settings.API_V1_STR}/face", tags=["Face Perception"])
+app.include_router(face.router, prefix="/api/analyze-face", tags=["Face Perception"])
 
 if __name__ == "__main__":
     import uvicorn

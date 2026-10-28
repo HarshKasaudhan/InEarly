@@ -58,6 +58,10 @@ class ChatRequest(BaseModel):
         default="18-24",
         description="Coarse demographic band for contextual sensitivity."
     )
+    emotional_context: Optional[str] = Field(
+        default=None,
+        description="Optional detected emotional cues (e.g. from camera FER scan) to adapt empathetic tone."
+    )
 
 
 class HelplineCard(BaseModel):

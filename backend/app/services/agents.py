@@ -79,6 +79,7 @@ def build_empathy_system_prompt(
     mode: ChatMode,
     language_pref: str,
     age_band: str,
+    emotional_context: Optional[str] = None,
 ) -> str:
     """
     Constructs an advanced, emotionally intelligent, non-repetitive system prompt for Inearly.
@@ -139,6 +140,13 @@ def build_empathy_system_prompt(
             "     * E.g., Somatic 5-4-3-2-1 Grounding anchor for racing panic thoughts.\n"
             "  3. COLLABORATIVE CHECK-IN (1 sentence): Ask how that small step resonates with them right now, keeping zero pressure.\n"
             "- Avoid huge overwhelming checklists. Keep it gentle, realistic, and moderate.\n"
+        )
+
+    if emotional_context:
+        prompt += (
+            f"\n\n### 4. MULTIMODAL FACIAL AFFECT CONTEXT (Consented Scan Insight):\n"
+            f"- On-demand facial emotion perception scan: {emotional_context}\n"
+            f"- Attune your empathy, cadence, and warmth to this affective state naturally without robotic disclosure."
         )
 
     return prompt
@@ -320,6 +328,7 @@ class AgentOrchestrator:
         mode: ChatMode,
         language_pref: str,
         age_band: str = "18-24",
+        emotional_context: Optional[str] = None,
     ) -> Tuple[str, List[ConcernTagItem], bool, List[str], str]:
         # 1. Safety Guardrail Check
         if detect_crisis(message):
@@ -345,8 +354,8 @@ class AgentOrchestrator:
         # 2. A2 Concern Classifier
         tentative_tags = classify_concerns_rule_based(message)
 
-        # 3. Construct Advanced System Prompt
-        system_prompt = build_empathy_system_prompt(mode, language_pref, age_band)
+        # 3. Construct Advanced System Prompt (Including multimodal affective context)
+        system_prompt = build_empathy_system_prompt(mode, language_pref, age_band, emotional_context)
 
         # 4. Multi-Model Fallback Pipeline
         # Step A: Primary - Gemini API

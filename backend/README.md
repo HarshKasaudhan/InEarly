@@ -17,6 +17,13 @@ FastAPI backend service powering the Inearly platform.
   - `GET /v1/memories`: Retrieves user-owned check-in summaries, active retention countdowns, and opted-in wellness goals.
   - `DELETE /v1/memories/{id}`: Permanently purges a specific conversation check-in and associated transcripts.
   - `DELETE /v1/account-data`: Irreversible hard account data erasure under DPDP Act 2023 (Right to Erasure / Right to be Forgotten).
+  - `POST /v1/tts/synthesize`: ElevenLabs female voice TTS service with automatic fallback to client-side browser synthesis.
+  - `POST /v1/face/analyze` (and `/api/analyze-face`): Dual-model camera perception pipeline:
+    - **Step 1 - MiniFASNet v2 Anti-Spoofing:** ONNX Runtime model (`garciafido/minifasnet-v2-anti-spoofing-onnx`) with 2.7x scale face crop, 80x80 BGR normalization. Detects print attacks and screen replay presentation attacks.
+    - **Security Rule:** Liveness verification executes first. If spoofing is detected, sensitive clinical affect interpretation is immediately halted.
+    - **Step 2 - Swin Transformer FER:** PyTorch Swin Transformer (`SEARO1/FER_model`) classifying 7 discrete emotions (`angry`, `disgust`, `fear`, `happy`, `neutral`, `sad`, `surprise`) and generating empathetic companion affect guidance.
+    - **Non-Biometric Notice:** Completely separate from identity verification; no continuous video streaming or biometric templates stored.
+  - `GET /v1/face/status`: Telemetry, model card specifications, and clinical disclaimers.
 
 ## Directory Structure
 

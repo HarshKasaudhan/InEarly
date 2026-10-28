@@ -89,6 +89,7 @@ async def chat_interaction(payload: ChatRequest) -> ChatResponse:
             mode=payload.mode,
             language_pref=payload.language_preference,
             age_band=payload.age_band or "18-24",
+            emotional_context=payload.emotional_context,
         )
         helpline_cards = []
 

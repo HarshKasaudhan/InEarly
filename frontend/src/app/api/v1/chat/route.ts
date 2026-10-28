@@ -11,7 +11,7 @@ export async function POST(request: Request) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(10000),
+        signal: AbortSignal.timeout(35000),
       });
 
       if (backendRes.ok) {
@@ -101,11 +101,12 @@ export async function POST(request: Request) {
       try {
         const groqModel = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
         const emotionalContextSnippet = body.emotional_context
-          ? `\nReal-Time Consented Facial Affect & Liveness Insight: ${body.emotional_context}\nAttune your empathy, pacing, and tone to this affective state naturally without robotic meta-commentary.`
+          ? `\nReal-Time Consented Facial Affect & Liveness Insight: ${body.emotional_context}\nAttune your empathy, pacing, somatic grounding, and tone to this affective state naturally without robotic meta-commentary (e.g., if Fear or Anxiety/Stress is detected, prioritize immediate soothing, safe pacing, and emotional regulation).`
           : "";
         const systemPrompt = `You are 'Inearly', a warm, confidential, culturally sensitive AI mental wellness companion tailored for India.
 Active Mode: ${isListen ? "'Just Listen' (validate emotions, acknowledge specific pain points, no unsolicited advice, 1 gentle question)" : "'Help Me Plan' (empathetic validation, exactly 1-2 realistic coping micro-steps, collaborative check-in)"}.
-Language: Respond naturally in '${lang}'. Actively address the user's specific struggle (e.g. career fear, heartbreak, exams, family pressure) without looping repetitive canned phrases.${emotionalContextSnippet}`;
+Language: Respond naturally in '${lang}'. Actively address the user's specific struggle (e.g. career fear, heartbreak, exams, family pressure) without looping repetitive canned phrases.${emotionalContextSnippet}
+COMPLETION MANDATE: Always complete your full thoughts, sentences, and supportive guidance naturally. Never stop abruptly or leave sentences cut off mid-way.`;
 
         const recentHistory = Array.isArray(body.history) ? body.history.slice(-8) : [];
         const groqMessages = [
@@ -127,9 +128,9 @@ Language: Respond naturally in '${lang}'. Actively address the user's specific s
             model: groqModel,
             messages: groqMessages,
             temperature: 0.72,
-            max_tokens: 650,
+            max_tokens: 2048,
           }),
-          signal: AbortSignal.timeout(8000),
+          signal: AbortSignal.timeout(25000),
         });
 
         if (groqRes.ok) {

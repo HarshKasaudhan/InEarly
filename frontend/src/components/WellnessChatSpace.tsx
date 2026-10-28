@@ -492,7 +492,17 @@ export const WellnessChatSpace: React.FC<WellnessChatSpaceProps> = ({
     // Construct live multimodal affective context for active Gemini/Groq prompt
     let emotionalContextStr: string | undefined = undefined;
     if (activeFaceEmotion && activeFaceEmotion.face_detected && activeFaceEmotion.emotion) {
-      emotionalContextStr = `User live emotion detected: ${activeFaceEmotion.emotion.dominant} (${activeFaceEmotion.emotion.confidence}% confidence). Affective category: ${activeFaceEmotion.affective_wellness?.affect_category || "steady_calm"}. Empathy guidance: ${activeFaceEmotion.affective_wellness?.empathy_note || ""}. Tone adaptation: respond with attuned warmth matching this live mood.`;
+      const dom = activeFaceEmotion.emotion.dominant;
+      const conf = activeFaceEmotion.emotion.confidence;
+      const cat = activeFaceEmotion.affective_wellness?.affect_category || "steady_calm";
+      const note = activeFaceEmotion.affective_wellness?.empathy_note || "";
+      let clinicalPriority = "";
+      if (dom === "Fear" || cat.includes("stress") || cat.includes("anxiety")) {
+        clinicalPriority = "CLINICAL PRIORITY: The user's face exhibits physiological signs of anxiety, tension, or fear. Ground them first with warm presence, emotional safety, and somatic reassurance.";
+      } else if (dom === "Sad") {
+        clinicalPriority = "CLINICAL PRIORITY: The user's face reflects quiet sadness or fatigue. Validate their emotional state with compassionate holding space.";
+      }
+      emotionalContextStr = `Dominant emotion: ${dom} (${conf}%). Category: ${cat}. Guidance: ${note}. ${clinicalPriority} Attune naturally without reciting technical metrics.`;
     }
 
     try {

@@ -144,14 +144,29 @@ def build_empathy_system_prompt(
 
     if emotional_context:
         prompt += (
-            f"\n\n### 4. REAL-TIME MULTIMODAL FACIAL AFFECT CONTEXT (Consented Vision Sensor Insight):\n"
-            f"- Telemetry & Anti-Spoofing Status: {emotional_context}\n"
-            f"- Real-Time Psychological Attunement Directives:\n"
-            f"  * Subtly calibrate your tone, cadence, and empathy depth based on the user's live affective presence.\n"
-            f"  * If sadness, vulnerability, or low mood is perceived: offer softer pacing, deep emotional validation, and unconditional warmth.\n"
-            f"  * If anxiety, fear, or overwhelm is perceived: provide soothing grounding, slow down explanations, and prioritize vagal calm.\n"
-            f"  * If calm, positive, or steady receptivity is perceived: mirror their clarity, reinforce small wins, and foster gentle forward momentum.\n"
-            f"  * DO NOT say 'My camera detected that you look sad' or disclose raw sensor percentages robotically. Weave your attunement seamlessly into your words."
+            f"\n\n### 6. REAL-TIME MULTIMODAL FACIAL EMOTION ATTUNEMENT (Consented Vision Sensor Insight):\n"
+            f"- Telemetry & Affect Status: {emotional_context}\n"
+            f"- Clinical & Psychological Attunement Directives:\n"
+            f"  * The user has opted in to real-time webcam affect perception. Integrate this insight naturally and holistically into your response.\n"
+            f"  * IF FEAR, ANXIETY, OR OVERWHELM DETECTED (e.g. tense facial cues, distress):\n"
+            f"    - Your immediate priority is nervous system stabilization and vagal calming.\n"
+            f"    - Deeply validate why feeling on edge makes complete sense given their situation.\n"
+            f"    - Use a calming, reassuring pacing. Offer a quick, low-friction somatic grounding anchor (such as a 4-second box breath or anchoring feet to the floor) before unpacking any cognitive problem.\n"
+            f"  * IF SADNESS, GRIEF, OR VULNERABILITY DETECTED:\n"
+            f"    - Offer soft, compassionate holding space. Validate the sheer heaviness of what they are carrying with zero unsolicited advice.\n"
+            f"  * IF ANGER, FRUSTRATION, OR AGITATION DETECTED:\n"
+            f"    - Validate the exhaustion and unfairness of their struggle without preaching, defensiveness, or toxic positivity.\n"
+            f"  * IF CALM OR STEADY DETECTED:\n"
+            f"    - Mirror their clarity, engage in deep, attentive active listening.\n"
+            f"  * IF POSITIVE OR HOPEFUL DETECTED:\n"
+            f"    - Celebrate their resilience and gently foster positive forward momentum.\n"
+            f"  * STRICT PRIVACY & ATTUNEMENT RULE: NEVER robotically announce 'My camera detected that you look anxious' or quote raw sensor numbers. Weave your empathy organically into your words.\n"
+            f"  * COMPLETION MANDATE: Always complete your full thoughts and sentences naturally. Never end abruptly or mid-sentence."
+        )
+    else:
+        prompt += (
+            "\n\n### 6. COMPLETION MANDATE:\n"
+            "- Always complete your full thoughts and sentences naturally. Never end abruptly or mid-sentence."
         )
 
     return prompt
@@ -263,24 +278,34 @@ class AgentOrchestrator:
                 )
             )
 
-            # Run in worker thread to prevent blocking event loop with 8-second timeout
+            # Run in worker thread to prevent blocking event loop with 25-second timeout
             def _sync_gemini_call():
                 return self._gemini_client.models.generate_content(
                     model=self.gemini_model,
                     contents=formatted_contents,
                     config=types.GenerateContentConfig(
                         system_instruction=system_prompt,
-                        temperature=0.75,
-                        max_output_tokens=650,
+                        temperature=0.72,
+                        max_output_tokens=2048,
                     ),
                 )
 
             response = await asyncio.wait_for(
                 asyncio.to_thread(_sync_gemini_call),
-                timeout=8.0
+                timeout=25.0
             )
 
-            text = response.text.strip() if response and response.text else ""
+            text = ""
+            if response:
+                try:
+                    text = response.text.strip() if response.text else ""
+                except Exception:
+                    if hasattr(response, "candidates") and response.candidates:
+                        c = response.candidates[0]
+                        if hasattr(c, "content") and hasattr(c.content, "parts"):
+                            parts_text = [p.text for p in c.content.parts if hasattr(p, "text") and p.text]
+                            text = "".join(parts_text).strip()
+
             if len(text) > 10:
                 return text
         except Exception as e:
@@ -313,9 +338,9 @@ class AgentOrchestrator:
                     model=self.groq_model,
                     messages=groq_messages,
                     temperature=0.72,
-                    max_tokens=650,
+                    max_tokens=2048,
                 ),
-                timeout=8.0
+                timeout=25.0
             )
 
             text = response.choices[0].message.content.strip() if response.choices else ""
@@ -376,7 +401,7 @@ class AgentOrchestrator:
 
         # Step C: Tertiary High-Availability Contextual Empathy Engine
         logger.info("Engaging Inearly contextual dynamic empathy engine...")
-        reply = self._generate_intelligent_fallback(message, history, mode, language_pref)
+        reply = self._generate_intelligent_fallback(message, history, mode, language_pref, emotional_context)
         return reply, tentative_tags, False, [], "inearly-contextual-engine"
 
     def _generate_intelligent_fallback(
@@ -384,16 +409,44 @@ class AgentOrchestrator:
         message: str,
         history: List[ChatMessage],
         mode: ChatMode,
-        language_pref: str
+        language_pref: str,
+        emotional_context: Optional[str] = None,
     ) -> str:
         """
         Dynamic, non-repetitive contextual empathy engine.
         Actively analyzes the user's specific pain point (Heartbreak, Career, Exams, Loneliness, Family, Sleep, Burnout)
-        and weaves past context memory so it never loops generic canned phrases.
+        and weaves past context memory and live camera emotion so it never loops generic canned phrases.
         """
         msg_lower = message.lower()
 
-        # 1. Detect prior conversational context from history
+        # 1. Detect live emotional attunement cues from webcam
+        emo_lower = (emotional_context or "").lower()
+        is_fear = any(w in emo_lower for w in ["fear", "anxious", "panic", "agitated"])
+        is_sad = any(w in emo_lower for w in ["sad", "grief", "vulnerable", "down"])
+
+        emo_bridge_hing = (
+            "Aapke andar ka yeh darr aur stress saaf mehsoos ho raha hai... Thoda araam se saans lijiye, main bilkul aapke saath hoon. "
+            if is_fear
+            else "Aapka yeh bhaari-pan aur udaasi saaf mehsoos ho rahi hai... "
+            if is_sad
+            else ""
+        )
+        emo_bridge_en = (
+            "I can sense how much fear and anxiety is weighing on you right now... Take a gentle breath, you are safe here. "
+            if is_fear
+            else "I can sense the quiet heaviness and sadness you are carrying... "
+            if is_sad
+            else ""
+        )
+        emo_bridge_hi = (
+            "मैं महसूस कर सकता हूँ कि इस वक्त आपके मन में काफी घबराहट और डर है... गहरी सांस लीजिए, आप अकेले नहीं हैं। "
+            if is_fear
+            else "आपके भीतर का यह भारीपन और उदासी साफ महसूस हो रही है... "
+            if is_sad
+            else ""
+        )
+
+        # 2. Detect prior conversational context from history
         prior_context_topics = []
         if history:
             for h in history[-8:]:
@@ -414,22 +467,22 @@ class AgentOrchestrator:
 
         # Context bridges
         bridge_hinglish = [
-            f"Pehele jo aapne {prior_topic} ke baare mein share kiya tha, uske saath yeh sab sambhalna ",
-            f"Connecting back to what you mentioned about {prior_topic}, ",
-            f"Aapne pehle bhi {prior_topic} ka stress mention kiya tha—",
-        ] if prior_topic else ["", "", ""]
+            f"{emo_bridge_hing}Pehele jo aapne {prior_topic} ke baare mein share kiya tha, uske saath yeh sab sambhalna ",
+            f"{emo_bridge_hing}Connecting back to what you mentioned about {prior_topic}, ",
+            f"{emo_bridge_hing}Aapne pehle bhi {prior_topic} ka stress mention kiya tha—",
+        ] if prior_topic else [emo_bridge_hing, emo_bridge_hing, emo_bridge_hing]
 
         bridge_hindi = [
-            f"जैसा कि आपने पहले {prior_topic} के तनाव का जिक्र किया था, ",
-            f"पहले की बात को जोड़ते हुए, ",
-            f"यह देखते हुए कि आप पहले से {prior_topic} का बोझ संभाल रहे हैं, ",
-        ] if prior_topic else ["", "", ""]
+            f"{emo_bridge_hi}जैसा कि आपने पहले {prior_topic} के तनाव का जिक्र किया था, ",
+            f"{emo_bridge_hi}पहले की बात को जोड़ते हुए, ",
+            f"{emo_bridge_hi}यह देखते हुए कि आप पहले से {prior_topic} का बोझ संभाल रहे हैं, ",
+        ] if prior_topic else [emo_bridge_hi, emo_bridge_hi, emo_bridge_hi]
 
         bridge_en = [
-            f"Connecting this with what you mentioned earlier about {prior_topic}, ",
-            f"Bearing in mind the weight of {prior_topic} you shared before, ",
-            f"Reflecting back on {prior_topic}, ",
-        ] if prior_topic else ["", "", ""]
+            f"{emo_bridge_en}Connecting this with what you mentioned earlier about {prior_topic}, ",
+            f"{emo_bridge_en}Bearing in mind the weight of {prior_topic} you shared before, ",
+            f"{emo_bridge_en}Reflecting back on {prior_topic}, ",
+        ] if prior_topic else [emo_bridge_en, emo_bridge_en, emo_bridge_en]
 
         b_hing = random.choice(bridge_hinglish)
         b_hi = random.choice(bridge_hindi)

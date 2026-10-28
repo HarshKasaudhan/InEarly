@@ -144,9 +144,14 @@ def build_empathy_system_prompt(
 
     if emotional_context:
         prompt += (
-            f"\n\n### 4. MULTIMODAL FACIAL AFFECT CONTEXT (Consented Scan Insight):\n"
-            f"- On-demand facial emotion perception scan: {emotional_context}\n"
-            f"- Attune your empathy, cadence, and warmth to this affective state naturally without robotic disclosure."
+            f"\n\n### 4. REAL-TIME MULTIMODAL FACIAL AFFECT CONTEXT (Consented Vision Sensor Insight):\n"
+            f"- Telemetry & Anti-Spoofing Status: {emotional_context}\n"
+            f"- Real-Time Psychological Attunement Directives:\n"
+            f"  * Subtly calibrate your tone, cadence, and empathy depth based on the user's live affective presence.\n"
+            f"  * If sadness, vulnerability, or low mood is perceived: offer softer pacing, deep emotional validation, and unconditional warmth.\n"
+            f"  * If anxiety, fear, or overwhelm is perceived: provide soothing grounding, slow down explanations, and prioritize vagal calm.\n"
+            f"  * If calm, positive, or steady receptivity is perceived: mirror their clarity, reinforce small wins, and foster gentle forward momentum.\n"
+            f"  * DO NOT say 'My camera detected that you look sad' or disclose raw sensor percentages robotically. Weave your attunement seamlessly into your words."
         )
 
     return prompt

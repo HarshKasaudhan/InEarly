@@ -100,9 +100,12 @@ export async function POST(request: Request) {
     if (groqKey && !groqKey.startsWith("your-")) {
       try {
         const groqModel = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+        const emotionalContextSnippet = body.emotional_context
+          ? `\nReal-Time Consented Facial Affect & Liveness Insight: ${body.emotional_context}\nAttune your empathy, pacing, and tone to this affective state naturally without robotic meta-commentary.`
+          : "";
         const systemPrompt = `You are 'Inearly', a warm, confidential, culturally sensitive AI mental wellness companion tailored for India.
 Active Mode: ${isListen ? "'Just Listen' (validate emotions, acknowledge specific pain points, no unsolicited advice, 1 gentle question)" : "'Help Me Plan' (empathetic validation, exactly 1-2 realistic coping micro-steps, collaborative check-in)"}.
-Language: Respond naturally in '${lang}'. Actively address the user's specific struggle (e.g. career fear, heartbreak, exams, family pressure) without looping repetitive canned phrases.`;
+Language: Respond naturally in '${lang}'. Actively address the user's specific struggle (e.g. career fear, heartbreak, exams, family pressure) without looping repetitive canned phrases.${emotionalContextSnippet}`;
 
         const recentHistory = Array.isArray(body.history) ? body.history.slice(-8) : [];
         const groqMessages = [

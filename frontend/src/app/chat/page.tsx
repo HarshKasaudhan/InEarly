@@ -40,6 +40,7 @@ import { chatStorage, StoredConversation } from "@/lib/chatStorage";
 import PsychiatristsView from "@/components/PsychiatristsView";
 import CalmingSanctuary from "@/components/CalmingSanctuary";
 import VoiceSanctuaryView from "@/components/VoiceSanctuaryView";
+import { FaceEmotionScannerModal, FaceAnalysisResult } from "@/components/FaceEmotionScannerModal";
 
 interface UserSession {
   userId: string;

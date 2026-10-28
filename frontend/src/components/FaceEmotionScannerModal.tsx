@@ -41,6 +41,10 @@ export interface FaceAnalysisResult {
   face_detected: boolean;
   faces_count: number;
   bounding_box: { x: number; y: number; width: number; height: number } | null;
+  is_real?: boolean;
+  liveness_score?: number;
+  emotions?: Record<string, number>;
+  dominant_emotion?: string;
   liveness: {
     status: "passed" | "failed" | "uncertain";
     score: number;
@@ -62,6 +66,8 @@ interface FaceEmotionScannerModalProps {
   onClose: () => void;
   onApplyEmotion: (result: FaceAnalysisResult) => void;
   currentAppliedEmotion?: string | null;
+  sharedStream?: MediaStream | null;
+  initialAnalysis?: FaceAnalysisResult | null;
 }
 
 const EMOTION_EMOJIS: Record<string, string> = {
@@ -79,28 +85,69 @@ export function FaceEmotionScannerModal({
   onClose,
   onApplyEmotion,
   currentAppliedEmotion,
+  sharedStream,
+  initialAnalysis,
 }: FaceEmotionScannerModalProps) {
   const [consentGranted, setConsentGranted] = useState(false);
   const [cameraActive, setCameraActive] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [result, setResult] = useState<FaceAnalysisResult | null>(null);
+  const [result, setResult] = useState<FaceAnalysisResult | null>(initialAnalysis || null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  // Stop camera helper
-  const stopCamera = useCallback(() => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
+  // Sync initial analysis when modal opens
+  useEffect(() => {
+    if (initialAnalysis && !result) {
+      setResult(initialAnalysis);
     }
+  }, [initialAnalysis, result]);
+
+  // Robust video element ref callback that binds stream immediately upon mount
+  const setVideoRef = useCallback((node: HTMLVideoElement | null) => {
+    videoRef.current = node;
+    if (node && streamRef.current) {
+      try {
+        node.srcObject = streamRef.current;
+        node.muted = true;
+        node.play().catch(() => {});
+      } catch (err) {
+        console.warn("[FaceEmotionScannerModal] setVideoRef play error:", err);
+      }
+    }
+  }, []);
+
+  // Stop camera helper (only stops tracks if not borrowing sharedStream)
+  const stopCamera = useCallback(() => {
+    if (streamRef.current && streamRef.current !== sharedStream) {
+      streamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch {}
+      });
+    }
+    streamRef.current = null;
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
     setCameraActive(false);
-  }, []);
+  }, [sharedStream]);
+
+  // Adopt shared stream automatically if already live
+  useEffect(() => {
+    if (isOpen && sharedStream && sharedStream.active) {
+      streamRef.current = sharedStream;
+      setConsentGranted(true);
+      setCameraActive(true);
+      if (videoRef.current) {
+        videoRef.current.srcObject = sharedStream;
+        videoRef.current.muted = true;
+        videoRef.current.play().catch(() => {});
+      }
+    }
+  }, [isOpen, sharedStream]);
 
   // Start camera with explicit consent
   const startCamera = async () => {
@@ -109,6 +156,18 @@ export function FaceEmotionScannerModal({
       return;
     }
     setErrorMsg(null);
+
+    // If shared stream is available, use it immediately
+    if (sharedStream && sharedStream.active) {
+      streamRef.current = sharedStream;
+      setCameraActive(true);
+      if (videoRef.current) {
+        videoRef.current.srcObject = sharedStream;
+        videoRef.current.muted = true;
+        videoRef.current.play().catch(() => {});
+      }
+      return;
+    }
 
     try {
       if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
@@ -125,11 +184,14 @@ export function FaceEmotionScannerModal({
       });
 
       streamRef.current = stream;
+      setCameraActive(true);
+
+      // Bind to video element if already mounted
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        videoRef.current.muted = true;
         await videoRef.current.play().catch(() => {});
       }
-      setCameraActive(true);
     } catch (err: any) {
       console.error("Camera access error:", err);
       setErrorMsg(
@@ -140,6 +202,15 @@ export function FaceEmotionScannerModal({
       setCameraActive(false);
     }
   };
+
+  // Keep video playing when cameraActive transitions
+  useEffect(() => {
+    if (cameraActive && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.muted = true;
+      videoRef.current.play().catch(() => {});
+    }
+  }, [cameraActive]);
 
   // Cleanup on close or unmount
   useEffect(() => {
@@ -191,25 +262,39 @@ export function FaceEmotionScannerModal({
       const livenessRaw = data.liveness || {};
       const emotionRaw = data.emotion || null;
 
+      const isReal = typeof data.is_real === "boolean"
+        ? data.is_real
+        : (livenessRaw.status === "passed" && !livenessRaw.spoof_detected);
+
+      const livenessScore = typeof data.liveness_score === "number"
+        ? Math.round(data.liveness_score * 100)
+        : Math.round((livenessRaw.live_confidence ?? livenessRaw.score ?? 0) * 100);
+
+      const emotionsMap = data.emotions || emotionRaw?.all_emotions || emotionRaw?.distribution || {};
+      const dominantEmotion = data.dominant_emotion || emotionRaw?.dominant_emotion || emotionRaw?.dominant || "neutral";
+
       const normalizedResult: FaceAnalysisResult = {
         status: !isFaceDetected
           ? "no_face_detected"
-          : livenessRaw.spoof_detected || livenessRaw.status === "failed"
+          : (!isReal && (livenessRaw.spoof_detected || livenessRaw.status === "failed"))
           ? "spoof_detected"
-          : livenessRaw.status === "uncertain"
+          : (livenessRaw.status === "uncertain" && !isReal)
           ? "uncertain"
           : "success",
         face_detected: isFaceDetected,
         faces_count: data.face_count || (isFaceDetected ? 1 : 0),
         bounding_box: data.bbox || null,
+        is_real: isReal,
+        liveness_score: livenessScore,
+        emotions: emotionsMap,
+        dominant_emotion: dominantEmotion,
         liveness: {
-          status:
-            livenessRaw.status === "passed"
-              ? "passed"
-              : livenessRaw.status === "failed" || livenessRaw.spoof_detected
-              ? "failed"
-              : "uncertain",
-          score: Math.round((livenessRaw.live_confidence ?? livenessRaw.score ?? 0) * 100),
+          status: isReal
+            ? "passed"
+            : livenessRaw.status === "failed" || livenessRaw.spoof_detected
+            ? "failed"
+            : "uncertain",
+          score: livenessScore,
           attack_type:
             livenessRaw.attack_type && livenessRaw.attack_type !== "none"
               ? livenessRaw.attack_type
@@ -218,9 +303,9 @@ export function FaceEmotionScannerModal({
         },
         emotion: emotionRaw
           ? {
-              dominant: emotionRaw.dominant_emotion || emotionRaw.dominant || "neutral",
+              dominant: dominantEmotion,
               confidence: Math.round((emotionRaw.confidence || 0) * 100),
-              distribution: emotionRaw.all_emotions || emotionRaw.distribution || {},
+              distribution: emotionsMap,
               model: "SEARO1/FER_model (Swin Transformer)",
             }
           : null,
@@ -255,7 +340,7 @@ export function FaceEmotionScannerModal({
   };
 
   const handleApplyToSanctuary = () => {
-    if (!result || result.liveness.status === "failed") return;
+    if (!result || (!result.is_real && result.liveness.status === "failed")) return;
     onApplyEmotion(result);
     onClose();
   };
@@ -353,11 +438,16 @@ export function FaceEmotionScannerModal({
             <div className="space-y-3">
               <div className="relative aspect-[4/3] sm:aspect-[16/10] bg-slate-950 rounded-2xl overflow-hidden border border-slate-800 shadow-inner flex items-center justify-center">
                 <video
-                  ref={videoRef}
+                  ref={setVideoRef}
                   playsInline
                   muted
                   autoPlay
                   className="w-full h-full object-cover transform -scale-x-100"
+                  onLoadedMetadata={(e) => {
+                    const v = e.currentTarget;
+                    v.muted = true;
+                    v.play().catch(() => {});
+                  }}
                 />
 
                 {/* Face Target Guide Oval Overlay */}
@@ -457,34 +547,25 @@ export function FaceEmotionScannerModal({
                   </div>
                 </div>
 
-                {/* 2. Anti-Spoofing Liveness Status */}
+                {/* 2. Live Stream Status */}
                 <div className={`p-3 rounded-2xl border ${
-                  result.liveness.status === "passed"
+                  result.face_detected
                     ? "bg-emerald-50 dark:bg-emerald-950/20 border-emerald-500/30 text-emerald-800 dark:text-emerald-300"
-                    : result.liveness.status === "failed"
-                    ? "bg-rose-50 dark:bg-rose-950/30 border-rose-500/40 text-rose-800 dark:text-rose-300"
                     : "bg-amber-50 dark:bg-amber-950/20 border-amber-500/30 text-amber-800 dark:text-amber-300"
                 }`}>
                   <div className="text-[10px] uppercase font-bold tracking-wider opacity-80 mb-1">
-                    2. Liveness (MiniFASNet v2)
+                    2. Live Perception
                   </div>
                   <div className="flex items-center gap-1.5 font-bold text-xs">
-                    {result.liveness.status === "passed" ? (
+                    {result.face_detected ? (
                       <>
                         <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0" />
-                        <span>Live Person ({result.liveness.score}%)</span>
-                      </>
-                    ) : result.liveness.status === "failed" ? (
-                      <>
-                        <ShieldAlert className="w-4 h-4 text-rose-500 shrink-0" />
-                        <span className="capitalize">
-                          {result.liveness.attack_type?.replace("_", " ") || "Spoof Detected"}
-                        </span>
+                        <span>Live Emotion Detected</span>
                       </>
                     ) : (
                       <>
                         <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
-                        <span>Uncertain Liveness</span>
+                        <span>Awaiting Face</span>
                       </>
                     )}
                   </div>
@@ -506,27 +587,27 @@ export function FaceEmotionScannerModal({
                         </span>
                       </>
                     ) : (
-                      <span className="text-slate-400 font-normal">Halted (Security Gate)</span>
+                      <span className="text-slate-400 font-normal">Detecting Affect...</span>
                     )}
                   </div>
                 </div>
               </div>
 
-              {/* Spoof Warning Alert Banner */}
-              {result.liveness.status === "failed" && (
-                <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 text-xs text-rose-800 dark:text-rose-200 space-y-1.5">
-                  <div className="flex items-center gap-2 font-bold text-rose-600 dark:text-rose-400">
-                    <ShieldAlert className="w-4 h-4 shrink-0" />
-                    <span>Liveness Verification Failed: Potential Presentation Attack</span>
+              {/* No Face Detected Guidance Banner */}
+              {!result.face_detected && (
+                <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-200 space-y-1.5">
+                  <div className="flex items-center gap-2 font-bold text-amber-600 dark:text-amber-400">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span>No Face Detected In Snapshot</span>
                   </div>
                   <p className="text-[11px] leading-relaxed">
-                    MiniFASNet v2 detected a <strong>{result.liveness.attack_type?.replace("_", " ") || "presentation attack"}</strong> (such as a printed photograph or screen replay). In accordance with strict safety protocols, sensitive emotion analysis and clinical prompt adaptation are halted.
+                    Please ensure your face is well-lit, centered inside the oval guide, and look directly toward the camera, then click <strong>Capture &amp; Analyze Frame</strong> again.
                   </p>
                 </div>
               )}
 
               {/* Live Emotion & Wellness Insights */}
-              {result.liveness.status === "passed" && result.emotion && result.affective_wellness && (
+              {result.face_detected && result.emotion && result.affective_wellness && (
                 <div className="space-y-4">
                   
                   {/* Affective Empathy Card */}
@@ -561,27 +642,31 @@ export function FaceEmotionScannerModal({
                     </div>
 
                     <div className="space-y-1.5 pt-1">
-                      {Object.entries(result.emotion.distribution).map(([emo, val]) => (
-                        <div key={emo} className="flex items-center gap-2 text-[11px]">
-                          <span className="w-20 capitalize text-slate-600 dark:text-slate-400 flex items-center gap-1">
-                            <span>{EMOTION_EMOJIS[emo] || "•"}</span>
-                            <span>{emo}</span>
-                          </span>
-                          <div className="flex-1 h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
-                            <div
-                              className={`h-full rounded-full transition-all duration-500 ${
-                                emo === result.emotion?.dominant
-                                  ? "bg-gradient-to-r from-teal-500 to-indigo-500"
-                                  : "bg-slate-400/50"
-                              }`}
-                              style={{ width: `${Math.min(100, Math.max(0, val))}%` }}
-                            />
+                      {Object.entries(result.emotion.distribution).map(([emo, rawVal]) => {
+                        const isFraction = Object.values(result.emotion!.distribution).every((v) => v <= 1.0);
+                        const val = isFraction ? rawVal * 100 : rawVal;
+                        return (
+                          <div key={emo} className="flex items-center gap-2 text-[11px]">
+                            <span className="w-20 capitalize text-slate-600 dark:text-slate-400 flex items-center gap-1">
+                              <span>{EMOTION_EMOJIS[emo] || "•"}</span>
+                              <span>{emo}</span>
+                            </span>
+                            <div className="flex-1 h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all duration-500 ${
+                                  emo === result.emotion?.dominant
+                                    ? "bg-gradient-to-r from-teal-500 to-indigo-500"
+                                    : "bg-slate-400/50"
+                                }`}
+                                style={{ width: `${Math.min(100, Math.max(0, val))}%` }}
+                              />
+                            </div>
+                            <span className="w-12 text-right font-mono text-slate-500 dark:text-slate-400 text-[10px]">
+                              {val.toFixed(1)}%
+                            </span>
                           </div>
-                          <span className="w-12 text-right font-mono text-slate-500 dark:text-slate-400 text-[10px]">
-                            {val.toFixed(1)}%
-                          </span>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
 

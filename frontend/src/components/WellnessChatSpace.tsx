@@ -8,6 +8,7 @@ import {
   Headphones, 
   Compass, 
   ShieldCheck, 
+  ShieldAlert,
   PhoneCall, 
   Info, 
   Check, 
@@ -22,13 +23,18 @@ import {
   MessageSquare,
   CheckCircle2,
   Plus,
-  History
+  History,
+  Camera,
+  Smile
 } from "lucide-react";
 import { LanguagePref, AgeBand } from "./OnboardingFlow";
 import { SafetyCrisisModal, HelplineDetail } from "./SafetyCrisisModal";
 import { WellnessPlanCard, WellnessGoal } from "./WellnessPlanCard";
 import { TalkingHeadAvatar, TalkingHeadAvatarHandle } from "./TalkingHeadAvatar";
 import { MemoryConsentModal } from "./MemoryConsentModal";
+import { FaceEmotionScannerModal, FaceAnalysisResult } from "./FaceEmotionScannerModal";
+import { useWebcamStream } from "@/hooks/useWebcamStream";
+import { LiveEmotionCompanionWidget } from "./LiveEmotionCompanionWidget";
 import { chatStorage } from "@/lib/chatStorage";
 
 export interface ConcernTag {
@@ -163,9 +169,159 @@ export const WellnessChatSpace: React.FC<WellnessChatSpaceProps> = ({
   const [planRecommendations, setPlanRecommendations] = useState<WellnessGoal[]>([]);
   const [companionMode, setCompanionMode] = useState<"simple" | "3d">("3d");
   const [isListeningVoice, setIsListeningVoice] = useState(false);
+  const [isFaceScannerOpen, setIsFaceScannerOpen] = useState(false);
+  const [activeFaceEmotion, setActiveFaceEmotion] = useState<FaceAnalysisResult | null>(null);
+  const [isPersistentScanning, setIsPersistentScanning] = useState(false);
+  const [isScanningPaused, setIsScanningPaused] = useState(false);
+  const [isAnalyzingFrame, setIsAnalyzingFrame] = useState(false);
+  const isAnalyzingRef = useRef(false);
+
+  const {
+    stream: webcamStream,
+    isActive: isWebcamActive,
+    startStream: startWebcam,
+    stopStream: stopWebcam,
+    setVideoRef: setWebcamVideoRef,
+    captureFrameBase64,
+  } = useWebcamStream({ idealWidth: 640, idealHeight: 480, facingMode: "user" });
 
   const avatarRef = useRef<TalkingHeadAvatarHandle>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Persistent Background Analysis Loop (Executes periodically every 3.5s while active)
+  useEffect(() => {
+    if (!isPersistentScanning || !isWebcamActive || isScanningPaused) {
+      return;
+    }
+
+    const SCAN_INTERVAL_MS = 3500;
+    const intervalId = setInterval(async () => {
+      if (isAnalyzingRef.current) return;
+      const frameBase64 = captureFrameBase64(0.85);
+      if (!frameBase64) return;
+
+      isAnalyzingRef.current = true;
+      setIsAnalyzingFrame(true);
+
+      try {
+        const res = await fetch("/api/v1/face/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            image_base64: frameBase64,
+            user_consent: true,
+            session_id: conversationId,
+          }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const isFaceDetected = Boolean(data.face_detected);
+          const livenessRaw = data.liveness || {};
+          const emotionRaw = data.emotion || null;
+
+          const isReal = typeof data.is_real === "boolean"
+            ? data.is_real
+            : (livenessRaw.status === "passed" && !livenessRaw.spoof_detected);
+
+          const livenessScore = typeof data.liveness_score === "number"
+            ? Math.round(data.liveness_score * 100)
+            : Math.round((livenessRaw.live_confidence ?? livenessRaw.score ?? 0) * 100);
+
+          const emotionsMap = data.emotions || emotionRaw?.all_emotions || emotionRaw?.distribution || {};
+          const dominantEmotion = data.dominant_emotion || emotionRaw?.dominant_emotion || emotionRaw?.dominant || "neutral";
+
+          const normalizedResult: FaceAnalysisResult = {
+            status: !isFaceDetected
+              ? "no_face_detected"
+              : (!isReal && (livenessRaw.spoof_detected || livenessRaw.status === "failed"))
+              ? "spoof_detected"
+              : (livenessRaw.status === "uncertain" && !isReal)
+              ? "uncertain"
+              : "success",
+            face_detected: isFaceDetected,
+            faces_count: data.face_count || (isFaceDetected ? 1 : 0),
+            bounding_box: data.bbox || null,
+            is_real: isReal,
+            liveness_score: livenessScore,
+            emotions: emotionsMap,
+            dominant_emotion: dominantEmotion,
+            liveness: {
+              status: isReal
+                ? "passed"
+                : livenessRaw.status === "failed" || livenessRaw.spoof_detected
+                ? "failed"
+                : "uncertain",
+              score: livenessScore,
+              attack_type:
+                livenessRaw.attack_type && livenessRaw.attack_type !== "none"
+                  ? livenessRaw.attack_type
+                  : null,
+              model: "garciafido/minifasnet-v2-anti-spoofing-onnx",
+            },
+            emotion: emotionRaw
+              ? {
+                  dominant: dominantEmotion,
+                  confidence: Math.round((emotionRaw.confidence || 0) * 100),
+                  distribution: emotionsMap,
+                  model: "SEARO1/FER_model (Swin Transformer)",
+                }
+              : null,
+            affective_wellness: emotionRaw
+              ? {
+                  affect_category: emotionRaw.affective_state || "steady_calm",
+                  stress_vulnerability:
+                    (emotionRaw.stress_vulnerability_index || 0) > 60
+                      ? "high"
+                      : (emotionRaw.stress_vulnerability_index || 0) > 30
+                      ? "moderate"
+                      : "low",
+                  suggested_companion_tone: emotionRaw.avatar_mood || "calm",
+                  empathy_note:
+                    emotionRaw.empathy_guidance ||
+                    data.empathy_guidance ||
+                    "Live emotional presence detected.",
+                }
+              : null,
+            clinical_disclaimer:
+              data.security_notice ||
+              "Non-biometric wellness estimation. Not a psychiatric diagnosis or legal identity proof.",
+          };
+
+          setActiveFaceEmotion(normalizedResult);
+
+          // Synchronize 3D avatar facial expression in real-time
+          if (normalizedResult.face_detected && (normalizedResult.is_real || normalizedResult.liveness.status === "passed")) {
+            const targetMood =
+              normalizedResult.affective_wellness?.suggested_companion_tone ||
+              normalizedResult.emotion?.dominant ||
+              "neutral";
+            avatarRef.current?.setMood(targetMood);
+          }
+        }
+      } catch (err) {
+        console.warn("[WellnessChatSpace] Periodic face scan error:", err);
+      } finally {
+        isAnalyzingRef.current = false;
+        setIsAnalyzingFrame(false);
+      }
+    }, SCAN_INTERVAL_MS);
+
+    return () => clearInterval(intervalId);
+  }, [isPersistentScanning, isWebcamActive, isScanningPaused, captureFrameBase64, conversationId]);
+
+  const handleTogglePersistentScanning = useCallback(async () => {
+    if (isPersistentScanning) {
+      setIsPersistentScanning(false);
+      stopWebcam();
+    } else {
+      const stream = await startWebcam();
+      if (stream) {
+        setIsPersistentScanning(true);
+        setIsScanningPaused(false);
+      }
+    }
+  }, [isPersistentScanning, startWebcam, stopWebcam]);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
 
@@ -333,6 +489,12 @@ export const WellnessChatSpace: React.FC<WellnessChatSpaceProps> = ({
       content: m.text,
     }));
 
+    // Construct live multimodal affective context for active Gemini/Groq prompt
+    let emotionalContextStr: string | undefined = undefined;
+    if (activeFaceEmotion && activeFaceEmotion.face_detected && activeFaceEmotion.emotion) {
+      emotionalContextStr = `User live emotion detected: ${activeFaceEmotion.emotion.dominant} (${activeFaceEmotion.emotion.confidence}% confidence). Affective category: ${activeFaceEmotion.affective_wellness?.affect_category || "steady_calm"}. Empathy guidance: ${activeFaceEmotion.affective_wellness?.empathy_note || ""}. Tone adaptation: respond with attuned warmth matching this live mood.`;
+    }
+
     try {
       const res = await fetch("/api/v1/chat", {
         method: "POST",
@@ -345,6 +507,7 @@ export const WellnessChatSpace: React.FC<WellnessChatSpaceProps> = ({
           mode,
           language_preference: currentLang,
           age_band: userSession.ageBand,
+          emotional_context: emotionalContextStr,
         }),
       });
 
@@ -433,6 +596,47 @@ export const WellnessChatSpace: React.FC<WellnessChatSpaceProps> = ({
     setActiveTags((prev) => prev.filter((t) => t.category !== category));
   };
 
+  const handleApplyFaceEmotion = useCallback((analysis: FaceAnalysisResult) => {
+    setActiveFaceEmotion(analysis);
+
+    // 1. Synchronize 3D avatar facial expression immediately
+    const targetMood =
+      analysis.affective_wellness?.suggested_companion_tone ||
+      analysis.emotion?.dominant ||
+      "neutral";
+    avatarRef.current?.setMood(targetMood);
+
+    // 2. Add empathetic affective guidance to the active chat conversation
+    if (analysis.affective_wellness?.empathy_note) {
+      const dominantStr = analysis.emotion?.dominant || "steady";
+      const confidenceStr = analysis.emotion?.confidence ? ` (${analysis.emotion.confidence}%)` : "";
+      const feedbackMessage: Message = {
+        id: `affect-${Date.now()}`,
+        role: "assistant",
+        text: `🌸 **Affective Synchrony Aligned**: Face scan perceived a **${dominantStr}${confidenceStr}** presence. ${analysis.affective_wellness.empathy_note}\n\nI've synchronized my 3D companion tone to **${targetMood}** to support you warmly.`,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        tags: analysis.emotion?.dominant
+          ? [
+              {
+                category: "affective_emotion",
+                display_label: `Affect: ${analysis.emotion.dominant}`,
+                tentative_flag: false,
+                confidence: (analysis.emotion.confidence || 0) / 100,
+                user_confirmed: true,
+              },
+            ]
+          : undefined,
+      };
+
+      setMessages((prev) => [...prev, feedbackMessage]);
+      const uid = userSession.userId || "anon-user-default";
+      if (conversationId) {
+        chatStorage.saveMessage(conversationId, uid, feedbackMessage, mode);
+        onConversationsUpdated?.();
+      }
+    }
+  }, [userSession.userId, conversationId, mode, onConversationsUpdated]);
+
   return (
     <>
       <SafetyCrisisModal
@@ -450,6 +654,15 @@ export const WellnessChatSpace: React.FC<WellnessChatSpaceProps> = ({
         isMemoryEnabled={isMemoryConsent}
         onToggleMemory={handleToggleMemoryConsent}
         onPurgeAll={handlePurgeAllHistory}
+      />
+
+      <FaceEmotionScannerModal
+        isOpen={isFaceScannerOpen}
+        onClose={() => setIsFaceScannerOpen(false)}
+        onApplyEmotion={handleApplyFaceEmotion}
+        currentAppliedEmotion={activeFaceEmotion?.emotion?.dominant || null}
+        sharedStream={webcamStream}
+        initialAnalysis={activeFaceEmotion}
       />
 
       <div className="w-full flex-1 flex flex-col h-full min-h-0 rounded-3xl bg-white/95 dark:bg-slate-900/90 border border-slate-200/90 dark:border-slate-800/90 shadow-2xl shadow-slate-200/40 dark:shadow-black/50 overflow-hidden backdrop-blur-xl transition-all duration-300 ease-in-out">
@@ -552,6 +765,46 @@ export const WellnessChatSpace: React.FC<WellnessChatSpaceProps> = ({
                 </button>
               ))}
             </div>
+
+            {/* Persistent Face Emotion Sensing Toggle Button */}
+            <button
+              type="button"
+              onClick={handleTogglePersistentScanning}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer shadow-2xs border ${
+                isPersistentScanning && isWebcamActive
+                  ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-700 dark:text-emerald-300"
+                  : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:text-teal-600 dark:hover:text-teal-400 hover:bg-slate-200/80 dark:hover:bg-slate-700 border-slate-300/80 dark:border-slate-700"
+              }`}
+              title={
+                isPersistentScanning && isWebcamActive
+                  ? "Live Face Sensing Active (Tap to pause/stop)"
+                  : "Start Persistent Webcam Face Emotion & Liveness Sensing"
+              }
+            >
+              <Camera className="w-3.5 h-3.5 text-teal-500" />
+              <span className="hidden sm:inline">
+                {isPersistentScanning && isWebcamActive ? "Sensing Active" : "Face Sensing"}
+              </span>
+              {isPersistentScanning && isWebcamActive && (
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              )}
+            </button>
+
+            {/* Active Affect Badge */}
+            {activeFaceEmotion?.emotion && (
+              <button
+                type="button"
+                onClick={() => setIsFaceScannerOpen(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/25 transition-all cursor-pointer animate-fade-in shadow-xs"
+                title={`Live Emotion Detected: ${activeFaceEmotion.emotion.dominant} (${activeFaceEmotion.emotion.confidence}%). Click to inspect FER breakdown.`}
+              >
+                <ShieldCheck className="w-3 h-3 text-emerald-500 shrink-0" />
+                <span className="capitalize">{activeFaceEmotion.emotion.dominant}</span>
+                <span className="hidden sm:inline font-mono text-[9px] opacity-80">
+                  ({activeFaceEmotion.emotion.confidence}%)
+                </span>
+              </button>
+            )}
 
             {/* Helplines Button */}
             <button
@@ -939,14 +1192,51 @@ export const WellnessChatSpace: React.FC<WellnessChatSpaceProps> = ({
 
           {/* Right Column: Dedicated 3D TalkingHead Avatar Viewport Container */}
           {companionMode === "3d" && (
-            <div className="w-full lg:w-[360px] xl:w-[420px] 2xl:w-[460px] h-[260px] sm:h-[300px] lg:h-full order-first lg:order-last border-b lg:border-b-0 lg:border-l border-slate-200/80 dark:border-slate-800/80 flex flex-col bg-slate-950/95 shrink-0 min-h-0 overflow-hidden transition-all duration-300 ease-in-out">
-              <TalkingHeadAvatar
-                ref={avatarRef}
-                className="w-full h-full border-0 rounded-none bg-transparent"
-                avatarUrl="/avatars/inearly-companion.glb"
-                initialMood={mode === "plan" ? "happy" : "neutral"}
-                language={currentLang}
-                elevenLabsVoiceId="21m00Tcm4TlvDq8ikWAM"
+            <div className="w-full lg:w-[360px] xl:w-[420px] 2xl:w-[460px] h-[320px] sm:h-[360px] lg:h-full order-first lg:order-last border-b lg:border-b-0 lg:border-l border-slate-200/80 dark:border-slate-800/80 flex flex-col bg-slate-950/95 shrink-0 min-h-0 overflow-hidden transition-all duration-300 ease-in-out relative">
+              <div className="flex-1 min-h-0 relative">
+                <TalkingHeadAvatar
+                  ref={avatarRef}
+                  className="w-full h-full border-0 rounded-none bg-transparent"
+                  avatarUrl="/avatars/inearly-companion.glb"
+                  initialMood={mode === "plan" ? "happy" : "neutral"}
+                  language={currentLang}
+                  elevenLabsVoiceId="21m00Tcm4TlvDq8ikWAM"
+                  onOpenFaceScanner={() => setIsFaceScannerOpen(true)}
+                  isPersistentScanningActive={isPersistentScanning && isWebcamActive}
+                  onTogglePersistentScanning={handleTogglePersistentScanning}
+                />
+              </div>
+
+              {/* Embedded Live Webcam & Emotion Widget docked inside companion column */}
+              {isPersistentScanning && isWebcamActive && (
+                <div className="p-2.5 border-t border-slate-800/80 bg-slate-950/95 shrink-0 z-20">
+                  <LiveEmotionCompanionWidget
+                    setVideoRef={setWebcamVideoRef}
+                    isAnalyzing={isAnalyzingFrame}
+                    lastAnalysis={activeFaceEmotion}
+                    onOpenDiagnostics={() => setIsFaceScannerOpen(true)}
+                    onTogglePause={() => setIsScanningPaused((prev) => !prev)}
+                    isPaused={isScanningPaused}
+                    onStop={handleTogglePersistentScanning}
+                    scanIntervalSeconds={3.5}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Floating PIP Live Webcam & Emotion Widget if in Simple Chat mode */}
+          {companionMode === "simple" && isPersistentScanning && isWebcamActive && (
+            <div className="fixed bottom-24 right-5 z-40 w-72 shadow-2xl animate-fade-in">
+              <LiveEmotionCompanionWidget
+                setVideoRef={setWebcamVideoRef}
+                isAnalyzing={isAnalyzingFrame}
+                lastAnalysis={activeFaceEmotion}
+                onOpenDiagnostics={() => setIsFaceScannerOpen(true)}
+                onTogglePause={() => setIsScanningPaused((prev) => !prev)}
+                isPaused={isScanningPaused}
+                onStop={handleTogglePersistentScanning}
+                scanIntervalSeconds={3.5}
               />
             </div>
           )}

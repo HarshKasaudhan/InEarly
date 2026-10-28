@@ -54,6 +54,9 @@ interface TalkingHeadAvatarProps {
   onReady?: () => void;
   onSpeechStart?: () => void;
   onSpeechEnd?: () => void;
+  onOpenFaceScanner?: () => void;
+  isPersistentScanningActive?: boolean;
+  onTogglePersistentScanning?: () => void;
 }
 
 const VALID_MOODS: Record<string, string> = {
@@ -92,6 +95,9 @@ export const TalkingHeadAvatar = forwardRef<
       onReady,
       onSpeechStart,
       onSpeechEnd,
+      onOpenFaceScanner,
+      isPersistentScanningActive = false,
+      onTogglePersistentScanning,
     },
     ref
   ) => {
@@ -590,20 +596,51 @@ export const TalkingHeadAvatar = forwardRef<
                 {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
               </button>
 
-              {/* Camera Angle Toggle */}
+              {/* Camera Face Emotion & Liveness Scanner Toggle */}
               <button
-                onClick={toggleCameraView}
-                className="p-1.5 rounded-lg bg-slate-900/80 border border-slate-800 text-slate-300 hover:text-white hover:bg-slate-800 transition-all cursor-pointer shrink-0"
-                title={`Switch camera view (Currently: ${cameraView})`}
+                onClick={() => {
+                  if (onTogglePersistentScanning) {
+                    onTogglePersistentScanning();
+                  } else if (onOpenFaceScanner) {
+                    onOpenFaceScanner();
+                  } else {
+                    toggleCameraView();
+                  }
+                }}
+                className={`p-1.5 rounded-lg border transition-all cursor-pointer shrink-0 relative ${
+                  isPersistentScanningActive
+                    ? "bg-emerald-500/20 border-emerald-500/50 text-emerald-300 shadow-md shadow-emerald-500/20"
+                    : onOpenFaceScanner || onTogglePersistentScanning
+                    ? "bg-teal-500/10 border-teal-500/40 text-teal-300 hover:text-white hover:bg-teal-500/20 shadow-xs"
+                    : "bg-slate-900/80 border-slate-800 text-slate-300 hover:text-white hover:bg-slate-800"
+                }`}
+                title={
+                  isPersistentScanningActive
+                    ? "Persistent Face Sensing Active (Tap to turn off)"
+                    : "Enable Persistent Face Emotion & Liveness Sensing (Webcam)"
+                }
               >
                 <Camera className="w-3.5 h-3.5" />
+                {isPersistentScanningActive && (
+                  <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                )}
               </button>
 
-              {/* Mood Switcher */}
+              {/* Mood & Face Emotion Diagnostics Modal */}
               <button
-                onClick={cycleMood}
-                className="p-1.5 rounded-lg bg-slate-900/80 border border-slate-800 text-teal-400 hover:text-teal-300 hover:bg-slate-800 transition-all cursor-pointer shrink-0"
-                title={`Cycle mood (Currently: ${currentMood})`}
+                onClick={(e) => {
+                  if (onOpenFaceScanner && !e.shiftKey) {
+                    onOpenFaceScanner();
+                  } else {
+                    cycleMood();
+                  }
+                }}
+                className="p-1.5 rounded-lg bg-slate-900/80 border border-slate-800 text-teal-400 hover:text-teal-200 hover:bg-slate-800 transition-all cursor-pointer shrink-0"
+                title={
+                  onOpenFaceScanner
+                    ? `Perceive Facial Emotion & View Diagnostics (Current: ${currentMood})`
+                    : `Cycle mood (Currently: ${currentMood})`
+                }
               >
                 <Smile className="w-3.5 h-3.5" />
               </button>

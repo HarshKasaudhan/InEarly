@@ -83,6 +83,7 @@ async def analyze_face(payload: FaceAnalysisRequest):
         result = await face_analysis_service.analyze_face_frame(
             image_base64=payload.image_base64,
             user_consent=payload.user_consent,
+            session_id=payload.session_id,
         )
         return result
     except Exception as e:
